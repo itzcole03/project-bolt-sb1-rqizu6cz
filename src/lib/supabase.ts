@@ -8,6 +8,7 @@ export const supabase = createClient(supabaseUrl, supabaseKey);
 export interface NHLPlayer {
   id: string;
   name: string;
+  nhl_player_id: number;
   points_games: number;
   points_total_games: number;
   shots_threshold: number;

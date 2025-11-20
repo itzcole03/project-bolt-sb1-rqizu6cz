@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Trophy, RefreshCw } from 'lucide-react';
 import { supabase, NHLPlayer } from './lib/supabase';
-import { getNHLPlayerStats } from './lib/nhlApi';
 import { PlayerRow } from './components/PlayerRow';
 import { AddPlayerForm } from './components/AddPlayerForm';
 
@@ -11,11 +10,7 @@ function App() {
   const [sortBy, setSortBy] = useState<'name' | 'points' | 'shots'>('name');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    loadPlayers();
-  }, []);
-
-  const loadPlayers = async () => {
+  const loadPlayers = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase
       .from('nhl_players')
@@ -28,7 +23,11 @@ function App() {
       setPlayers(data || []);
     }
     setLoading(false);
-  };
+  }, []);
+
+  useEffect(() => {
+    loadPlayers();
+  }, [loadPlayers]);
 
   const handleAddPlayer = async (newPlayer: Omit<NHLPlayer, 'id' | 'created_at' | 'updated_at'>) => {
     const { error } = await supabase
@@ -78,16 +77,26 @@ function App() {
     let updatedCount = 0;
     let failedPlayers: { name: string; reason: string }[] = [];
 
+    // Import getNHLPlayerStats from nhlApi
+    const { getNHLPlayerStats } = await import('./lib/nhlApi');
+
     for (const player of players) {
+      // Skip players without a valid NHL ID (e.g., old manual entries)
+      if (!player.nhl_player_id || player.nhl_player_id === 0) {
+        failedPlayers.push({ name: player.name, reason: 'Missing NHL Player ID (Old manual entry)' });
+        continue;
+      }
+
       try {
-        console.log(`Refreshing stats for: ${player.name}`);
-        const nhlStats = await getNHLPlayerStats(player.name);
+        console.log(`Refreshing stats for: ${player.name} (ID: ${player.nhl_player_id})`);
+        const nhlStats = await getNHLPlayerStats(player.nhl_player_id);
 
         if (!nhlStats) {
-          failedPlayers.push({ name: player.name, reason: 'Player not found in NHL database' });
+          failedPlayers.push({ name: player.name, reason: 'Could not fetch stats from NHL API' });
           continue;
         }
 
+        // Only update if there are games played
         if (nhlStats.totalGames === 0) {
           failedPlayers.push({ name: player.name, reason: 'No games played this season' });
           continue;
@@ -98,9 +107,9 @@ function App() {
         const { error } = await supabase
           .from('nhl_players')
           .update({
-            points_games: nhlStats.pointsGames,
+            points_games: nhlStats.pointsGames, // Total Points
             points_total_games: nhlStats.totalGames,
-            shots_games: nhlStats.shots,
+            shots_games: nhlStats.shots, // Total Shots
             shots_total_games: nhlStats.totalGames,
             updated_at: new Date().toISOString(),
           })
@@ -125,35 +134,28 @@ function App() {
     await loadPlayers();
     setIsRefreshing(false);
 
-    if (updatedCount > 0) {
-      let message = `✓ Updated ${updatedCount} player(s) with latest NHL stats!`;
-      if (failedPlayers.length > 0) {
-        message += `\n\n⚠ Failed updates:\n`;
-        failedPlayers.forEach(p => {
-          message += `• ${p.name}: ${p.reason}\n`;
-        });
-      }
-      alert(message);
-    } else {
-      let message = 'No stats were updated.\n\nReasons:\n';
+    let message = `Stats Refresh Complete: Updated ${updatedCount} player(s).`;
+    if (failedPlayers.length > 0) {
+      message += `\n\nFailed to update ${failedPlayers.length} player(s):\n`;
       failedPlayers.forEach(p => {
         message += `• ${p.name}: ${p.reason}\n`;
       });
-      alert(message);
     }
+
+    alert(message);
   };
 
   const sortedPlayers = [...players].sort((a, b) => {
     if (sortBy === 'name') {
       return a.name.localeCompare(b.name);
     } else if (sortBy === 'points') {
-      const aPercent = a.points_total_games > 0 ? a.points_games / a.points_total_games : 0;
-      const bPercent = b.points_total_games > 0 ? b.points_games / b.points_total_games : 0;
-      return bPercent - aPercent;
-    } else {
-      const aPercent = a.shots_total_games > 0 ? a.shots_games / a.shots_total_games : 0;
-      const bPercent = b.shots_total_games > 0 ? b.shots_games / b.shots_total_games : 0;
-      return bPercent - aPercent;
+      const aAvg = a.points_total_games > 0 ? a.points_games / a.points_total_games : 0;
+      const bAvg = b.points_total_games > 0 ? b.points_games / b.points_total_games : 0;
+      return bAvg - aAvg;
+    } else { // sortBy === 'shots'
+      const aAvg = a.shots_total_games > 0 ? a.shots_games / a.shots_total_games : 0;
+      const bAvg = b.shots_total_games > 0 ? b.shots_games / b.shots_total_games : 0;
+      return bAvg - aAvg;
     }
   });
 
@@ -196,13 +198,13 @@ function App() {
                 onClick={() => setSortBy('points')}
                 className={`px-2 py-1 rounded ${sortBy === 'points' ? 'bg-slate-600' : 'hover:bg-slate-600'}`}
               >
-                Points %
+                Points Avg
               </button>
               <button
                 onClick={() => setSortBy('shots')}
                 className={`px-2 py-1 rounded ${sortBy === 'shots' ? 'bg-slate-600' : 'hover:bg-slate-600'}`}
               >
-                Shots %
+                Shots Avg
               </button>
             </div>
           </div>
@@ -215,11 +217,12 @@ function App() {
                 <thead className="bg-slate-100">
                   <tr>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Player</th>
-                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Points (1+ PPG)</th>
-                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Points %</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Total Points</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Games Played</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Points Avg (PPG)</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">SOG Threshold</th>
-                    <th className="px-4 py-3 text-left font-semibold text-slate-700">SOG Games</th>
-                    <th className="px-4 py-3 text-left font-semibold text-slate-700">SOG %</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Total SOG</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">SOG Avg (SPG)</th>
                     <th className="px-4 py-3 text-left font-semibold text-slate-700">Actions</th>
                   </tr>
                 </thead>
@@ -247,10 +250,12 @@ function App() {
         <div className="mt-6 text-sm text-slate-600 bg-white rounded-lg p-4">
           <h3 className="font-semibold mb-2">Legend:</h3>
           <ul className="space-y-1">
-            <li><strong>Points (1+ PPG):</strong> Games with at least 1 point / Total games</li>
-            <li><strong>SOG Threshold:</strong> Shots on goal threshold (1.5 or 2.5)</li>
-            <li><strong>SOG Games:</strong> Games meeting the shots threshold / Total games</li>
-            <li><strong>Percentages:</strong> Automatically calculated and updated</li>
+            <li><strong>Total Points:</strong> Total goals and assists in the current season.</li>
+            <li><strong>Games Played:</strong> Total games played in the current season.</li>
+            <li><strong>Points Avg (PPG):</strong> Points Per Game (Total Points / Games Played).</li>
+            <li><strong>SOG Threshold:</strong> Shots on goal threshold for tracking.</li>
+            <li><strong>Total SOG:</strong> Total shots on goal in the current season.</li>
+            <li><strong>SOG Avg (SPG):</strong> Shots Per Game (Total SOG / Games Played).</li>
           </ul>
         </div>
       </div>

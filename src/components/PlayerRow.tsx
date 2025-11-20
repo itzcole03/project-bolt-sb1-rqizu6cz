@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pencil, Trash2, Save, X } from 'lucide-react';
+import { Trash2, Edit, Save, X } from 'lucide-react';
 import { NHLPlayer } from '../lib/supabase';
 
 interface PlayerRowProps {
@@ -10,150 +10,89 @@ interface PlayerRowProps {
 
 export function PlayerRow({ player, onUpdate, onDelete }: PlayerRowProps) {
   const [isEditing, setIsEditing] = useState(false);
-  const [editedPlayer, setEditedPlayer] = useState(player);
-
-  const pointsPercentage = player.points_total_games > 0
-    ? ((player.points_games / player.points_total_games) * 100).toFixed(1)
-    : '0.0';
-
-  const shotsPercentage = player.shots_total_games > 0
-    ? ((player.shots_games / player.shots_total_games) * 100).toFixed(1)
-    : '0.0';
+  const [shotsThreshold, setShotsThreshold] = useState(player.shots_threshold);
 
   const handleSave = async () => {
-    await onUpdate(player.id, {
-      name: editedPlayer.name,
-      points_games: editedPlayer.points_games,
-      points_total_games: editedPlayer.points_total_games,
-      shots_threshold: editedPlayer.shots_threshold,
-      shots_games: editedPlayer.shots_games,
-      shots_total_games: editedPlayer.shots_total_games,
-    });
+    await onUpdate(player.id, { shots_threshold: shotsThreshold });
     setIsEditing(false);
   };
 
   const handleCancel = () => {
-    setEditedPlayer(player);
+    setShotsThreshold(player.shots_threshold);
     setIsEditing(false);
   };
 
-  if (isEditing) {
-    return (
-      <tr className="bg-blue-50">
-        <td className="px-4 py-3 border-b">
-          <input
-            type="text"
-            value={editedPlayer.name}
-            onChange={(e) => setEditedPlayer({ ...editedPlayer, name: e.target.value })}
-            className="w-full px-2 py-1 border rounded"
-          />
-        </td>
-        <td className="px-4 py-3 border-b">
-          <div className="flex gap-1 items-center">
-            <input
-              type="number"
-              value={editedPlayer.points_games}
-              onChange={(e) => setEditedPlayer({ ...editedPlayer, points_games: parseInt(e.target.value) || 0 })}
-              className="w-16 px-2 py-1 border rounded"
-            />
-            <span>/</span>
-            <input
-              type="number"
-              value={editedPlayer.points_total_games}
-              onChange={(e) => setEditedPlayer({ ...editedPlayer, points_total_games: parseInt(e.target.value) || 0 })}
-              className="w-16 px-2 py-1 border rounded"
-            />
-          </div>
-        </td>
-        <td className="px-4 py-3 border-b text-gray-400">
-          {editedPlayer.points_total_games > 0
-            ? ((editedPlayer.points_games / editedPlayer.points_total_games) * 100).toFixed(1)
-            : '0.0'}%
-        </td>
-        <td className="px-4 py-3 border-b">
-          <select
-            value={editedPlayer.shots_threshold}
-            onChange={(e) => setEditedPlayer({ ...editedPlayer, shots_threshold: parseFloat(e.target.value) })}
-            className="w-20 px-2 py-1 border rounded"
-          >
-            <option value="0">-</option>
-            <option value="1.5">1.5</option>
-            <option value="2.5">2.5</option>
-          </select>
-        </td>
-        <td className="px-4 py-3 border-b">
-          <div className="flex gap-1 items-center">
-            <input
-              type="number"
-              value={editedPlayer.shots_games}
-              onChange={(e) => setEditedPlayer({ ...editedPlayer, shots_games: parseInt(e.target.value) || 0 })}
-              className="w-16 px-2 py-1 border rounded"
-            />
-            <span>/</span>
-            <input
-              type="number"
-              value={editedPlayer.shots_total_games}
-              onChange={(e) => setEditedPlayer({ ...editedPlayer, shots_total_games: parseInt(e.target.value) || 0 })}
-              className="w-16 px-2 py-1 border rounded"
-            />
-          </div>
-        </td>
-        <td className="px-4 py-3 border-b text-gray-400">
-          {editedPlayer.shots_total_games > 0
-            ? ((editedPlayer.shots_games / editedPlayer.shots_total_games) * 100).toFixed(1)
-            : '0.0'}%
-        </td>
-        <td className="px-4 py-3 border-b">
-          <div className="flex gap-2">
-            <button
-              onClick={handleSave}
-              className="p-1 text-green-600 hover:bg-green-100 rounded"
-              title="Save"
-            >
-              <Save size={18} />
-            </button>
-            <button
-              onClick={handleCancel}
-              className="p-1 text-gray-600 hover:bg-gray-100 rounded"
-              title="Cancel"
-            >
-              <X size={18} />
-            </button>
-          </div>
-        </td>
-      </tr>
-    );
-  }
+  // Points Average (Total Points / Total Games)
+  const pointsAverage =
+    player.points_total_games > 0
+      ? player.points_games / player.points_total_games
+      : 0;
+
+  // Shots Per Game (Total Shots / Total Games)
+  const shotsPerGame =
+    player.shots_total_games > 0
+      ? player.shots_games / player.shots_total_games
+      : 0;
 
   return (
-    <tr className="hover:bg-gray-50">
-      <td className="px-4 py-3 border-b font-medium">{player.name}</td>
-      <td className="px-4 py-3 border-b">
-        {player.points_games}/{player.points_total_games}
+    <tr className="border-b hover:bg-gray-50">
+      <td className="px-4 py-3 font-medium text-slate-800">{player.name}</td>
+      <td className="px-4 py-3">{player.points_games}</td>
+      <td className="px-4 py-3">{player.points_total_games}</td>
+      <td className="px-4 py-3 font-mono text-sm">
+        {pointsAverage.toFixed(2)} PPG
       </td>
-      <td className="px-4 py-3 border-b text-gray-600">{pointsPercentage}%</td>
-      <td className="px-4 py-3 border-b">
-        {player.shots_threshold > 0 ? player.shots_threshold : '-'}
-      </td>
-      <td className="px-4 py-3 border-b">
-        {player.shots_total_games > 0 ? `${player.shots_games}/${player.shots_total_games}` : '-'}
-      </td>
-      <td className="px-4 py-3 border-b text-gray-600">
-        {player.shots_total_games > 0 ? `${shotsPercentage}%` : '-'}
-      </td>
-      <td className="px-4 py-3 border-b">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setIsEditing(true)}
-            className="p-1 text-blue-600 hover:bg-blue-100 rounded"
-            title="Edit"
+      <td className="px-4 py-3">
+        {isEditing ? (
+          <select
+            value={shotsThreshold}
+            onChange={(e) => setShotsThreshold(parseFloat(e.target.value))}
+            className="px-2 py-1 border rounded-lg"
           >
-            <Pencil size={18} />
-          </button>
+            <option value={0}>None</option>
+            <option value={1.5}>1.5</option>
+            <option value={2.5}>2.5</option>
+          </select>
+        ) : (
+          <span className="font-semibold">{player.shots_threshold === 0 ? 'None' : player.shots_threshold}</span>
+        )}
+      </td>
+      <td className="px-4 py-3">{player.shots_games}</td>
+      <td className="px-4 py-3 font-mono text-sm">
+        {shotsPerGame.toFixed(2)} SPG
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex gap-2">
+          {isEditing ? (
+            <>
+              <button
+                onClick={handleSave}
+                className="text-green-600 hover:text-green-800"
+                title="Save"
+              >
+                <Save size={18} />
+              </button>
+              <button
+                onClick={handleCancel}
+                className="text-gray-600 hover:text-gray-800"
+                title="Cancel"
+              >
+                <X size={18} />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setIsEditing(true)}
+              className="text-blue-600 hover:text-blue-800"
+              title="Edit Threshold"
+            >
+              <Edit size={18} />
+            </button>
+          )}
           <button
             onClick={() => onDelete(player.id)}
-            className="p-1 text-red-600 hover:bg-red-100 rounded"
-            title="Delete"
+            className="text-red-600 hover:text-red-800"
+            title="Delete Player"
           >
             <Trash2 size={18} />
           </button>

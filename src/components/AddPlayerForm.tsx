@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus, X, Loader } from 'lucide-react';
 import { searchNHLPlayers, getNHLPlayerStats, type NHLApiPlayer } from '../lib/nhlApi';
 
 interface AddPlayerFormProps {
   onAdd: (player: {
+    nhl_player_id: number;
     name: string;
     points_games: number;
     points_total_games: number;
@@ -11,6 +12,23 @@ interface AddPlayerFormProps {
     shots_games: number;
     shots_total_games: number;
   }) => Promise<void>;
+}
+
+// Custom hook for debouncing
+function useDebounce(value: string, delay: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
 }
 
 export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
@@ -21,37 +39,36 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
   const [selectedPlayer, setSelectedPlayer] = useState<NHLApiPlayer | null>(null);
   const [isFetchingStats, setIsFetchingStats] = useState(false);
   const [newPlayer, setNewPlayer] = useState({
+    nhl_player_id: 0,
     name: '',
-    points_games: 0,
+    points_games: 0, // Will now store total points
     points_total_games: 0,
     shots_threshold: 1.5,
-    shots_games: 0,
+    shots_games: 0, // Will now store total shots
     shots_total_games: 0,
   });
 
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+
   useEffect(() => {
-    const delayDebounceFn = setTimeout(async () => {
-      if (searchQuery.length >= 2) {
+    const performSearch = async () => {
+      if (debouncedSearchQuery.length >= 2) {
         setIsSearching(true);
-        const results = await searchNHLPlayers(searchQuery);
+        const results = await searchNHLPlayers(debouncedSearchQuery);
         setSearchResults(results);
         setIsSearching(false);
       } else {
         setSearchResults([]);
       }
-    }, 300);
+    };
 
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery]);
+    performSearch();
+  }, [debouncedSearchQuery]);
 
-  const handleSelectPlayer = async (player: NHLApiPlayer) => {
+  const handleSelectPlayer = useCallback(async (player: NHLApiPlayer) => {
     setSelectedPlayer(player);
-    setNewPlayer((prev) => ({
-      ...prev,
-      name: player.name,
-    }));
-    setSearchResults([]);
-    setSearchQuery('');
+    setSearchQuery(''); // Clear search query
+    setSearchResults([]); // Hide results
     setIsFetchingStats(true);
 
     const stats = await getNHLPlayerStats(player.id);
@@ -60,20 +77,31 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
     if (stats) {
       setNewPlayer((prev) => ({
         ...prev,
-        points_games: stats.pointsGames,
+        name: player.name,
+        nhl_player_id: player.id,
+        points_games: stats.pointsGames, // Now total points
         points_total_games: stats.totalGames,
-        shots_games: stats.shots,
+        shots_games: stats.shots, // Now total shots
         shots_total_games: stats.totalGames,
       }));
+    } else {
+      // Handle case where stats are not found
+      setNewPlayer((prev) => ({
+        ...prev,
+        name: player.name,
+        nhl_player_id: player.id,
+        points_games: 0,
+        points_total_games: 0,
+        shots_games: 0,
+        shots_total_games: 0,
+      }));
+      alert(`Could not fetch stats for ${player.name}. Please check if the player has played in the current season.`);
     }
-  };
+  }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPlayer.name.trim()) return;
-
-    await onAdd(newPlayer);
+  const resetForm = () => {
     setNewPlayer({
+      nhl_player_id: 0,
       name: '',
       points_games: 0,
       points_total_games: 0,
@@ -82,14 +110,24 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
       shots_total_games: 0,
     });
     setSelectedPlayer(null);
+    setSearchQuery('');
+    setSearchResults([]);
     setIsOpen(false);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPlayer.name.trim()) return;
+
+    await onAdd(newPlayer);
+    resetForm();
   };
 
   if (!isOpen) {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors mb-6"
       >
         <Plus size={20} />
         Add New Player
@@ -114,6 +152,7 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
             placeholder="Search by player name (min 2 characters)"
             className="w-full px-3 py-2 border rounded-lg"
             required
+            disabled={!!selectedPlayer}
           />
 
           {searchResults.length > 0 && !selectedPlayer && (
@@ -136,14 +175,7 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
               type="button"
               onClick={() => {
                 setSelectedPlayer(null);
-                setNewPlayer((prev) => ({
-                  ...prev,
-                  name: '',
-                  points_games: 0,
-                  points_total_games: 0,
-                  shots_games: 0,
-                  shots_total_games: 0,
-                }));
+                setNewPlayer((prev) => ({ ...prev, name: '', nhl_player_id: 0 }));
                 setSearchQuery('');
               }}
               className="absolute right-3 top-9 text-gray-400 hover:text-gray-600"
@@ -180,50 +212,46 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
               onChange={(e) => setNewPlayer({ ...newPlayer, shots_threshold: parseFloat(e.target.value) })}
               className="w-full px-3 py-2 border rounded-lg"
             >
-              <option value="0">None</option>
-              <option value="1.5">1.5</option>
-              <option value="2.5">2.5</option>
+              <option value={0}>None</option>
+              <option value={1.5}>1.5</option>
+              <option value={2.5}>2.5</option>
             </select>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Points Games (auto-filled)</label>
+            <label className="block text-sm font-medium mb-1">Total Points / Games</label>
             <div className="flex items-center gap-2">
               <input
                 type="number"
                 value={newPlayer.points_games}
-                onChange={(e) => setNewPlayer({ ...newPlayer, points_games: parseInt(e.target.value) || 0 })}
-                className="w-20 px-3 py-2 border rounded-lg bg-blue-50"
-                min="0"
+                readOnly
+                className="w-20 px-3 py-2 border rounded-lg bg-gray-100"
               />
               <span>/</span>
               <input
                 type="number"
                 value={newPlayer.points_total_games}
-                onChange={(e) => setNewPlayer({ ...newPlayer, points_total_games: parseInt(e.target.value) || 0 })}
-                className="w-20 px-3 py-2 border rounded-lg bg-blue-50"
-                min="0"
+                readOnly
+                className="w-20 px-3 py-2 border rounded-lg bg-gray-100"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium mb-1">Shots Games (auto-filled)</label>
+            <label className="block text-sm font-medium mb-1">Total Shots / Games</label>
             <div className="flex items-center gap-2">
               <input
                 type="number"
                 value={newPlayer.shots_games}
-                onChange={(e) => setNewPlayer({ ...newPlayer, shots_games: parseInt(e.target.value) || 0 })}
-                className="w-20 px-3 py-2 border rounded-lg bg-blue-50"
-                min="0"
+                readOnly
+                className="w-20 px-3 py-2 border rounded-lg bg-gray-100"
               />
               <span>/</span>
               <input
                 type="number"
                 value={newPlayer.shots_total_games}
-                onChange={(e) => setNewPlayer({ ...newPlayer, shots_total_games: parseInt(e.target.value) || 0 })}
-                className="w-20 px-3 py-2 border rounded-lg bg-blue-50"
-                min="0"
+                readOnly
+                className="w-20 px-3 py-2 border rounded-lg bg-gray-100"
               />
             </div>
           </div>
@@ -239,19 +267,7 @@ export function AddPlayerForm({ onAdd }: AddPlayerFormProps) {
           </button>
           <button
             type="button"
-            onClick={() => {
-              setIsOpen(false);
-              setSelectedPlayer(null);
-              setSearchQuery('');
-              setNewPlayer({
-                name: '',
-                points_games: 0,
-                points_total_games: 0,
-                shots_threshold: 1.5,
-                shots_games: 0,
-                shots_total_games: 0,
-              });
-            }}
+            onClick={resetForm}
             className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300"
           >
             Cancel
